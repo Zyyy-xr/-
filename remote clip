@@ -235,3 +235,5 @@ curl -v --connect-timeout 5 --max-time 15 -I https://chatgpt.com
 git clone https://github.com/vllm-project/vllm-ascend.git
 VLLM_TARGET_DEVICE=empty pip install -e . --no-build-isolation --trusted-host mirrors.aliyun.com -i https://mirrors.aliyun.com/pypi/simple
 git clone -b v0.27.1 https://github.com/vllm-project/vllm.git
+
+pip install ais_bench -i https://mirrors.huaweicloud.com/repository/pypi/simple --trusted-host mirrors.huaweicloud.com
