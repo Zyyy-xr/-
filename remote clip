@@ -232,3 +232,6 @@ export HTTPS_PROXY=http://127.0.0.1:容器端口
 export NO_PROXY=localhost,127.0.0.1
 
 curl -v --connect-timeout 5 --max-time 15 -I https://chatgpt.com
+git clone https://github.com/vllm-project/vllm-ascend.git
+VLLM_TARGET_DEVICE=empty pip install -e . --no-build-isolation --trusted-host mirrors.aliyun.com -i https://mirrors.aliyun.com/pypi/simple
+git clone -b v0.27.1 https://github.com/vllm-project/vllm.git
