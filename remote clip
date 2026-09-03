@@ -222,3 +222,13 @@ vllm serve /mnt/share/ \
         }
     }' \
   --additional_config '{"enable_cpu_binding": "True", "recompute_scheduler_enable": "True", "multistream_overlap_shared_expert": "True","enable_sparse_sfa_c8": true, "enable_sparse_li_c8": true,"finegrained_tp_config": {"lmhead_tensor_parallel_size":8},"eplb_config": {"dynamic_eplb": true,"expert_heat_collection_interval": 600,"algorithm_execution_interval": 50,"num_redundant_experts": 16,"eplb_policy_type": 2}}'
+
+
+
+ssh -vvv -N -o ExitOnForwardFailure=yes -R 127.0.0.1:<容器上端口号>:<VPN ip地址>:<VPN端口> 服务器用户名@服务器ip地址
+
+export HTTP_PROXY=http://127.0.0.1:容器端口
+export HTTPS_PROXY=http://127.0.0.1:容器端口
+export NO_PROXY=localhost,127.0.0.1
+
+curl -v --connect-timeout 5 --max-time 15 -I https://chatgpt.com
