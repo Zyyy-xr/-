@@ -237,3 +237,13 @@ VLLM_TARGET_DEVICE=empty pip install -e . --no-build-isolation --trusted-host mi
 git clone -b v0.27.1 https://github.com/vllm-project/vllm.git
 
 pip install ais_bench -i https://mirrors.huaweicloud.com/repository/pypi/simple --trusted-host mirrors.huaweicloud.com
+
+git clone https://github.com/AISBench/benchmark.git
+cd benchmark/
+pip3 install -e ./
+
+pip3 install -r requirements/api.txt
+pip3 install -r requirements/extra.txt
+
+pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+pip config set global.trusted-host mirrors.aliyun.com
