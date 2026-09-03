@@ -55,3 +55,7 @@ export http_proxy="http://${proxy_user}:${proxy_pass}@${ip_addr}:8080"
 export https_proxy=$http_proxy  
 export no_proxy=127.0.0.1,localhost,local,.local
 
+
+http://260708jump.nsdsol.com/register?code=dj1yoHyN
+
+
