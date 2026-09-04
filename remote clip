@@ -261,3 +261,4 @@ pip3 install -r requirements/extra.txt
 
 pip3 install -r requirements/api.txt -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 pip3 install -r requirements/extra.txt -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+http://opencompass.oss-cn-shanghai.aliyuncs.com/datasets/data/gpqa.zip
