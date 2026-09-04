@@ -255,3 +255,9 @@ wget --no-check-certificate -P /目标/路径  http://.../gpqa.zip
 /usr/local/python3.11.10/lib/python3.11/site-packages/ais_bench/benchmark/configs/models/vllm_api/vllm_api_general_chat.py
 chat_template_kwargs = {"thinking": True},
 ais_bench --models vllm_api_general_chat --datasets aime2026_gen_0_shot_chat_prompt --dump-eval-details --debug
+
+pip3 install -r requirements/api.txt
+pip3 install -r requirements/extra.txt
+
+pip3 install -r requirements/api.txt -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+pip3 install -r requirements/extra.txt -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
