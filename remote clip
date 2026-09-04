@@ -303,3 +303,7 @@ vllm serve /mnt/share/weights/GLM-5.2-W8A8C8-A3-0808 \
   --trust-remote-code \
   --speculative-config '{"num_speculative_tokens": 3,"method": "deepseek_mtp", "enforce_eager":true}' \
 
+
+curl -X POST http://127.0.0.1:8004/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen3","messages":[{"role":"user","content":"你好，请介绍一下你自己"}],"stream":false,"max_tokens":256}'
