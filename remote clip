@@ -262,3 +262,24 @@ pip3 install -r requirements/extra.txt
 pip3 install -r requirements/api.txt -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 pip3 install -r requirements/extra.txt -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 http://opencompass.oss-cn-shanghai.aliyuncs.com/datasets/data/gpqa.zip
+
+echo "[$(date)] 开始清理所有进程..."
+
+# 1. 从 npu-smi info 中提取所有进程的PID
+pids=$(npu-smi info | awk -F'|' '{gsub(/ /,"",$3); if($3 ~ /^[0-9]+$/) print $3}' | sort -u)
+
+# 2. 判断是否提取到 PID
+if [ -z "$pids" ]; then
+    echo "未找到任何 VLLM 进程。"
+else
+    echo "发现以下进程 PID: $pids"
+    # 3. 逐个强制终止
+    for pid in $pids; do
+        echo "正在终止进程 $pid ..."
+        kill -9 "$pid"
+    done
+    # 4. 等待 3 秒，让 NPU 显存释放
+    sleep 3
+    echo "所有进程已清理。"
+fi
+
