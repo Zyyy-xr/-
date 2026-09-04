@@ -247,3 +247,5 @@ pip3 install -r requirements/extra.txt
 
 pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 pip config set global.trusted-host mirrors.aliyun.com
+
+pip install setuptools-rust -i https://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com
