@@ -267,3 +267,11 @@ http://opencompass.oss-cn-shanghai.aliyuncs.com/datasets/data/gpqa.zip
 
 python3 load_balance_proxy_server_example.py     --prefiller-hosts 141.61.41.211     --prefiller-ports 8010   --decoder-hosts 141.61.41.211     --decoder-ports 8011     --host 141.61.41.211    --port 8002
 cd vllm-ascend/examples/disaggregated_prefill_v1
+
+python3 load_balance_proxy_server_example.py \
+    --prefiller-hosts 192.168.13.184 \
+    --prefiller-ports 8010 \
+    --decoder-hosts 192.168.13.185 \
+    --decoder-ports 8011 \
+    --host 192.168.13.184 \
+    --port 8002
