@@ -275,3 +275,31 @@ python3 load_balance_proxy_server_example.py \
     --decoder-ports 8011 \
     --host 192.168.13.184 \
     --port 8002
+
+export HCCL_OP_EXPANSION_MODE="AIV"
+export OMP_PROC_BIND=false
+export OMP_NUM_THREADS=1
+export HCCL_BUFFSIZE=300
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+export VLLM_ENGINE_READY_TIMEOUT_S=1800
+export DYNAMIC_EPLB=true
+
+vllm serve /mnt/share/weights/GLM-5.2-W8A8C8-A3-0808 \
+  --host 0.0.0.0 \
+  --port 8004 \
+  --served-model-name glm \
+  --tensor-parallel-size 8 \
+  --data-parallel-size 2 \
+  --enable-expert-parallel \
+  --max-model-len 99328 \
+  --max-num-seqs 4 \
+  --max-num-batched-tokens 8192 \
+  --gpu-memory-utilization 0.94 \
+  --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' \
+  --no-enable-prefix-caching \
+  --no-async-scheduling \
+  --aggregate-engine-logging \
+  --additional_config '{"enable_cpu_binding": "True", "multistream_overlap_shared_expert": "True","enable_sparse_sfa_c8":true,"enable_sparse_li_c8":true,"eplb_config": {"dynamic_eplb": true,"expert_heat_collection_interval": 50, "algorithm_execution_interval": 5, "eplb_policy_type": 2,"num_redundant_experts": 0 }}' \
+  --trust-remote-code \
+  --speculative-config '{"num_speculative_tokens": 3,"method": "deepseek_mtp", "enforce_eager":true}' \
+
