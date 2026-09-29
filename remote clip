@@ -1,262 +1,63 @@
-https://github.com/vllm-project/vllm-ascend/compare/main...pichangping:vllm-ascend:c4_update
+    def write_cache(
+        self,
+        k_li: torch.Tensor,
+        k_li_scale: torch.Tensor | None,
+        slot_mapping: torch.Tensor,
+        indexer_attn_metadata: Any | None = None,
+    ) -> None:
+        """Persist ``k_li`` (and ``k_li_scale`` when LI quant is enabled) into
+        this indexer's own cache tensors: slot 0 of ``self.k_cache.kv_cache``
+        is the k cache, slot 1 (present only for LI quant) is the scale cache.
 
-@dataclass(frozen=True, kw_only=True)
-class AscendSFAIndexerCacheSpec(MLAAttentionSpec):
-    """KV cache spec for SFA indexer K/scale cache.
- 
-    The scheduler should treat this as a full-attention-compatible cache so it
-    can share block ids with the MLA cache in the same UniformType group. The
-    model runner still allocates it as an independent physical cache tensor.
-    """
- 
-    scale_dim: int = 0
-    scale_dtype: torch.dtype = torch.int8
-    cache_sparse_li_c8: bool = False
-    cache_sparse_li_c4: bool = False
-    cache_dtype_str: str | None = None
-    sfa_dcp_replicated_indexer_size: int = 1
- 
-    @property
-    def page_size_bytes(self) -> int:
-        return self.real_page_size_bytes
- 
-    @property
-    def real_page_size_bytes(self) -> int:
-        num_heads_per_page = self.block_size * self.num_kv_heads
-        return (
-            self.sfa_dcp_replicated_indexer_size
-            * num_heads_per_page
-            * (self.head_size * get_dtype_size(self.dtype) + self.scale_dim * get_dtype_size(self.scale_dtype))
-        )
- 
-    @classmethod
-    def merge(cls, specs: list[Self]) -> Self:
-        assert all(isinstance(spec, AscendSFAIndexerCacheSpec) for spec in specs), (
-            "All attention layers in the same KV cache group must be AscendSFAIndexerCacheSpec."
-        )
-        cache_dtype_str_set = set(spec.cache_dtype_str for spec in specs)
-        dtype_set = set(spec.dtype for spec in specs)
-        scale_dim_set = set(spec.scale_dim for spec in specs)
-        scale_dtype_set = set(spec.scale_dtype for spec in specs)
-        cache_sparse_li_c8_set = set(spec.cache_sparse_li_c8 for spec in specs)
-        cache_sparse_li_c4_set = set(spec.cache_sparse_li_c4 for spec in specs)
-        sfa_dcp_replicated_indexer_size_set = set(spec.sfa_dcp_replicated_indexer_size for spec in specs)
-        assert (
-            len(cache_dtype_str_set) == 1
-            and len(dtype_set) == 1
-            and len(scale_dim_set) == 1
-            and len(scale_dtype_set) == 1
-            and len(cache_sparse_li_c8_set) == 1
-            and len(cache_sparse_li_c4_set) == 1
-            and len(sfa_dcp_replicated_indexer_size_set) == 1
-        ), (
-            "All SFA indexer cache layers in the same KV cache group must use "
-            "the same dtype, scale layout, quantization method, LI quant flags "
-            "and DCP replication size."
-        )
-        return cls(
-            block_size=specs[0].block_size,
-            num_kv_heads=specs[0].num_kv_heads,
-            head_size=specs[0].head_size,
-            dtype=dtype_set.pop(),
-            cache_dtype_str=cache_dtype_str_set.pop(),
-            scale_dim=scale_dim_set.pop(),
-            scale_dtype=scale_dtype_set.pop(),
-            cache_sparse_li_c8=cache_sparse_li_c8_set.pop(),
-            cache_sparse_li_c4=cache_sparse_li_c4_set.pop(),
-            sfa_dcp_replicated_indexer_size=sfa_dcp_replicated_indexer_size_set.pop(),
-        )
+        ``forward`` calls this after ``_gather_cache_inputs`` has resolved
+        the parallel layout of the tensors and the slot mapping; variants
+        with a different cache layout should override it.
+        ``indexer_attn_metadata`` is this indexer's own layer metadata; the
+        LI C8 reshape-optim path reads its group fields.
+        """
+        use_reshape_optim = self._use_c8_reshape_optim()
 
-
-                # TODO: This mirrors upstream's separated KV/indexer specs for
-                # SFA, but keeps Ascend-specific shape/block-size accounting.
-                # Remove this special case once the generic vLLM spec/backend
-                # path can describe the Ascend SFA indexer layout directly.
-                cache_sparse_li_c8 = self.ascend_config.is_sparse_li_c8_layer(layer_name)
-                cache_sparse_li_c4 = self.ascend_config.is_sparse_li_c4_layer(layer_name)
-                head_dim = self.model_config.hf_text_config.index_head_dim
-                kv_cache_spec[layer_name] = AscendSFAIndexerCacheSpec(
-                    block_size=self.block_size,
-                    num_kv_heads=1,
-                    head_size=head_dim // 2 if cache_sparse_li_c4 else head_dim,
-                    dtype=self.c4_k_cache_dtype if cache_sparse_li_c4
-                    else self.c8_k_cache_dtype if cache_sparse_li_c8
-                    else self.kv_cache_dtype,
-                    cache_dtype_str=self.vllm_config.cache_config.cache_dtype,
-                    scale_dim=head_dim // 64 * 2 if cache_sparse_li_c4 else 1 if cache_sparse_li_c8 else 0,
-                    scale_dtype=self.c4_k_scale_cache_dtype if cache_sparse_li_c4
-                    else self.c8_k_scale_cache_dtype if cache_sparse_li_c8 else torch.int8,
-                    cache_sparse_li_c4=cache_sparse_li_c4,
-                    cache_sparse_li_c8=cache_sparse_li_c8,
-                    sfa_dcp_replicated_indexer_size=self.sfa_dcp_replicated_indexer_size,
+        def _store_kv(src: torch.Tensor, cache_idx: int) -> None:
+            if use_reshape_optim:
+                assert indexer_attn_metadata is not None
+                torch.ops._C_ascend.store_kv_block(
+                    src,
+                    self.k_cache.kv_cache[cache_idx],
+                    indexer_attn_metadata.group_len,
+                    indexer_attn_metadata.group_key_idx,
+                    indexer_attn_metadata.group_key_cache_idx,
+                    indexer_attn_metadata.block_size,
+                )
+            else:
+                cache = self.k_cache.kv_cache[cache_idx]
+                # npu_scatter_nd_update_ doesn't support float4_e2m1fn_x2;
+                # view as uint8 (same 1-byte layout) for the scatter write.
+                if src.dtype == torch.float4_e2m1fn_x2:
+                    cache = cache.view(torch.uint8)
+                    src = src.view(torch.uint8)
+                torch_npu.npu_scatter_nd_update_(
+                    cache.view(-1, src.shape[-1]),
+                    slot_mapping.view(-1, 1),
+                    src.view(-1, src.shape[-1]),
                 )
 
+        _store_kv(k_li, INDEXER_K_CACHE_SLOT)
 
-
-        if isinstance(attn_module, DeepseekV32IndexerCache):
-            if not getattr(
-                getattr(attn_layers.get(layer_name.replace(".indexer.k_cache", ".attn")), "impl", None),
-                "runtime_has_indexer",
-                True,
-            ):
-                continue
-            cache_sparse_li_c8 = ascend_config.is_sparse_li_c8_layer(layer_name)
-            cache_sparse_li_c4 = ascend_config.is_sparse_li_c4_layer(layer_name)
-            head_dim = vllm_config.model_config.hf_text_config.index_head_dim
-            kv_cache_spec[layer_name] = AscendSFAIndexerCacheSpec(
-                block_size=vllm_config.cache_config.block_size,
-                num_kv_heads=1,
-                head_size=head_dim // 2 if cache_sparse_li_c4 else head_dim,
-                dtype=torch.uint8 if cache_sparse_li_c4
-                else c8_k_cache_dtype if cache_sparse_li_c8
-                else vllm_config.model_config.dtype,
-                cache_dtype_str=vllm_config.cache_config.cache_dtype,
-                scale_dim=head_dim // 64 * 2 if cache_sparse_li_c4 else 1 if cache_sparse_li_c8 else 0,
-                scale_dtype=torch.float8_e8m0fnu if cache_sparse_li_c4
-                else c8_k_scale_cache_dtype if cache_sparse_li_c8 else torch.int8,
-                cache_sparse_li_c4=cache_sparse_li_c4,
-                cache_sparse_li_c8=cache_sparse_li_c8,
-                sfa_dcp_replicated_indexer_size=sfa_dcp_replicated_indexer_size,
-            )
-            continue
-
-
-                # TODO: This mirrors upstream's separated KV/indexer specs for
-                # SFA, but keeps Ascend-specific shape/block-size accounting.
-                # Remove this special case once the generic vLLM spec/backend
-                # path can describe the Ascend SFA indexer layout directly.
-                cache_sparse_li_c8 = self.ascend_config.is_sparse_li_c8_layer(layer_name)
-                cache_sparse_li_c4 = self.ascend_config.is_sparse_li_c4_layer(layer_name)
-                head_dim = self.model_config.hf_text_config.index_head_dim
-                kv_cache_spec[layer_name] = AscendSFAIndexerCacheSpec(
-                    block_size=self.block_size,
-                    num_kv_heads=1,
-                    head_size=head_dim // 2 if cache_sparse_li_c4 else head_dim,
-                    dtype=self.c4_k_cache_dtype if cache_sparse_li_c4
-                    else self.c8_k_cache_dtype if cache_sparse_li_c8 
-                    else self.kv_cache_dtype,
-                    cache_dtype_str=(
-                        self.vllm_config.cache_config.cache_dtype
-                        if cache_sparse_li_c8 or cache_sparse_li_c4
-                        else "auto"
-                    ),
-                    scale_dim=head_dim // 64 * 2 if cache_sparse_li_c4 else 1 if cache_sparse_li_c8 else 0,
-                    scale_dtype=self.c4_k_scale_cache_dtype if cache_sparse_li_c4
-                    else self.c8_k_scale_cache_dtype if cache_sparse_li_c8 else torch.int8,
-                    cache_sparse_li_c4=cache_sparse_li_c4,
-                    cache_sparse_li_c8=cache_sparse_li_c8,
-                    sfa_dcp_replicated_indexer_size=self.sfa_dcp_replicated_indexer_size,
+        if self.enable_sparse_li_quant:
+            assert k_li_scale is not None
+            if use_reshape_optim:
+                _store_kv(k_li_scale, INDEXER_SCALE_CACHE_SLOT)
+            else:
+                # C4=(b*s, d/64, 2), C8=(b*s, 1).
+                scale_per_token = k_li_scale.shape[1:]
+                scale_cache = self.k_cache.kv_cache[INDEXER_SCALE_CACHE_SLOT]
+                # npu_scatter_nd_update_ doesn't support float8_e8m0fnu; view as
+                # uint8 (same 1-byte layout) for the scatter write.
+                if scale_cache.dtype == torch.float8_e8m0fnu:
+                    scale_cache = scale_cache.view(torch.uint8)
+                    k_li_scale = k_li_scale.view(torch.uint8)
+                torch_npu.npu_scatter_nd_update_(
+                    scale_cache.view(-1, *scale_per_token),
+                    slot_mapping.view(-1, 1),
+                    k_li_scale,
                 )
-
-
-
-        if isinstance(attn_module, DeepseekV32IndexerCache):
-            if not getattr(
-                getattr(attn_layers.get(layer_name.replace(".indexer.k_cache", ".attn")), "impl", None),
-                "runtime_has_indexer",
-                True,
-            ):
-                continue
-            cache_sparse_li_c8 = get_ascend_config().is_sparse_li_c8_layer(layer_name)
-            cache_sparse_li_c4 = get_ascend_config().is_sparse_li_c4_layer(layer_name)
-            head_dim = vllm_config.model_config.hf_text_config.index_head_dim
-            kv_cache_spec[layer_name] = AscendSFAIndexerCacheSpec(
-                block_size=vllm_config.cache_config.block_size,
-                num_kv_heads=1,
-                head_size=head_dim // 2 if cache_sparse_li_c4 else head_dim,
-                dtype=torch.uint8 if cache_sparse_li_c4
-                else c8_k_cache_dtype if cache_sparse_li_c8
-                else vllm_config.model_config.dtype,
-                cache_dtype_str=(vllm_config.cache_config.cache_dtype 
-                if cache_sparse_li_c8 or cache_sparse_li_c4 else "auto"),
-                scale_dim=head_dim // 64 * 2 if cache_sparse_li_c4 else 1 if cache_sparse_li_c8 else 0,
-                scale_dtype=torch.float8_e8m0fnu if cache_sparse_li_c4
-                else c8_k_scale_cache_dtype if cache_sparse_li_c8 else torch.int8,
-                li_quant_mode="cache_sparse_li_c4" if cache_sparse_li_c4
-                else "cache_sparse_li_c8" if cache_sparse_li_c8 else "",
-                sfa_dcp_replicated_indexer_size=sfa_dcp_replicated_indexer_size,
-            )
-            continue
-
-1111111111111111111111111111
-
-
-
-
-        if self.enable_sparse_sfa_c8:
-            self.sfa_c8_k_cache_dtype = kv_cache_dtype_str_to_dtype(
-                vllm_config.cache_config.cache_dtype, 
-                vllm_config.model_config
-            )
-        if self.enable_sparse_li_c8:
-            self.li_c8_k_cache_dtype = kv_cache_dtype_str_to_dtype(
-                vllm_config.attention_config.indexer_kv_dtype, 
-                vllm_config.model_config
-            )
-            if self.li_c8_k_cache_dtype == torch.float8_e4m3fn:
-                self.li_c8_k_scale_cache_dtype = torch.float32
-            elif self.li_c8_k_cache_dtype == torch.int8:
-                self.li_c8_k_scale_cache_dtype = torch.float16       
-        self.enable_sparse_li_c4 = self.ascend_config.enable_sparse_li_c4
-        if self.enable_sparse_li_c4:
-            self.li_c4_k_cache_dtype = torch.uint8
-            self.li_c4_k_scale_cache_dtype = torch.float8_e8m0fnu
-
-
-                    if current_sparse_sfa_c8:
-                        k_cache_dtype = self.sfa_c8_k_cache_dtype
-
-                        dtype = self.sfa_c8_k_cache_dtype
-
-                # TODO: This mirrors upstream's separated KV/indexer specs for
-                # SFA, but keeps Ascend-specific shape/block-size accounting.
-                # Remove this special case once the generic vLLM spec/backend
-                # path can describe the Ascend SFA indexer layout directly.
-                cache_sparse_li_c8 = self.ascend_config.is_sparse_li_c8_layer(layer_name)
-                cache_sparse_li_c4 = self.ascend_config.is_sparse_li_c4_layer(layer_name)
-                head_dim = self.model_config.hf_text_config.index_head_dim
-                kv_cache_spec[layer_name] = AscendSFAIndexerCacheSpec(
-                    block_size=self.block_size,
-                    num_kv_heads=1,
-                    head_size=head_dim // 2 if cache_sparse_li_c4 else head_dim,
-                    dtype=self.li_c4_k_cache_dtype if cache_sparse_li_c4
-                    else self.li_c8_k_cache_dtype if cache_sparse_li_c8 
-                    else self.kv_cache_dtype,
-                    cache_dtype_str=(
-                        self.vllm_config.cache_config.cache_dtype
-                        if cache_sparse_li_c8 or cache_sparse_li_c4
-                        else "auto"
-                    ),
-                    scale_dim=head_dim // 64 * 2 if cache_sparse_li_c4 else 1 if cache_sparse_li_c8 else 0,
-                    scale_dtype=self.li_c4_k_scale_cache_dtype if cache_sparse_li_c4
-                    else self.li_c8_k_scale_cache_dtype if cache_sparse_li_c8 else torch.int8,
-                    cache_sparse_li_c4=cache_sparse_li_c4,
-                    cache_sparse_li_c8=cache_sparse_li_c8,
-                    sfa_dcp_replicated_indexer_size=self.sfa_dcp_replicated_indexer_size,
-                )
-
-
-        # Sparse C8 has two independent meanings in SFA:
-        # - SFA packed KV cache for npu_kv_quant_sparse_flash_attention.
-        # - C8 indexer cache for lightning indexer.
-        # The user-facing switches control these layouts independently. LI C8
-        # applies only to layers that own an indexer cache.
-        self.enable_sparse_sfa_c8 = ascend_config.enable_sparse_sfa_c8
-        if self.qk_rope_head_dim == 0 and self.enable_sparse_sfa_c8:
-            raise NotImplementedError("NoPE SFA currently requires an unquantized latent KV cache.")
-        if self.enable_sparse_sfa_c8:
-            self.c8_k_cache_dtype = kv_cache_dtype_str_to_dtype(
-                kv_cache_dtype, self.vllm_config.model_config
-            )
-
-        if self.enable_sparse_sfa_c8:
-            self.sfa_qsfa_packed_kv_head_dim = get_sfa_qsfa_packed_head_dim(
-                self.kv_lora_rank,
-                self.qk_rope_head_dim,
-                self.sfa_qsfa_tile_size,
-            )
-        self.preprocess_type = PreprocessType.NATIVE
-
-        self.enable_mlapo = bool(get_ascend_config().enable_mlapo)
-
-        self.enable_sp = enable_sp()
